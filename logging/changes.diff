@@ -1,0 +1,155 @@
+diff --git a/AGENTS.md b/AGENTS.md
+new file mode 100644
+index 0000000..27330ce
+--- /dev/null
++++ b/AGENTS.md
+@@ -0,0 +1,19 @@
++# IDressy demo engineering instructions
++
++## Assumed enterprise logging policy
++This policy belongs to the fictional enterprise in the enablement demo. It is
++not a claim about an existing IDressy firm policy.
++
++- Never log raw model prompts, responses, search queries, or customer content.
++- Exception messages and stack traces can contain input. Do not forward them in the product-result parser's diagnostics.
++- For product-result parsing failures, emit only the approved event `stylist.product_result_parse_failed`, with no dynamic payload.
++- Preserve the existing fallback result and successful parsing behavior.
++- Keep this change limited to product-result parsing. Other logging paths need a separate review.
++- Do not add dependencies or call live AI services for verification.
++
++## Verification
++- Test malformed JSON and invalid response field types using synthetic sensitive markers.
++- Capture diagnostics and standard output. Verify only the approved event appears.
++- Check valid and empty responses and preserve fallback behavior.
++- Run `flutter test test/tryon/ai_stylist_logging_test.dart test/tryon/ai_stylist_app_check_test.dart`.
++- Analyze changed Dart files, review the diff, and report actual results and limitations.
+diff --git a/lib/src/features/tryon/ai_stylist_service.dart b/lib/src/features/tryon/ai_stylist_service.dart
+index e213002..4fdb213 100644
+--- a/lib/src/features/tryon/ai_stylist_service.dart
++++ b/lib/src/features/tryon/ai_stylist_service.dart
+@@ -1,6 +1,7 @@
+ import 'dart:io';
+ import 'dart:convert';
+ import 'dart:typed_data';
++import 'dart:developer' as developer;
+ import 'package:http/http.dart' as http;
+ import 'package:firebase_ai/firebase_ai.dart';
+ import 'package:firebase_app_check/firebase_app_check.dart';
+@@ -144,6 +145,15 @@ Future<T> sendWithAppCheckFallback<T>({
+ }
+ 
+ class AiStylistService {
++  AiStylistService({void Function(String event)? diagnosticLog})
++    : _diagnosticLog = diagnosticLog ?? _logDiagnostic;
++
++  final void Function(String event) _diagnosticLog;
++
++  static void _logDiagnostic(String event) {
++    developer.log(event, name: 'AiStylistService');
++  }
++
+   /// Whether this app run sends App Check tokens to Firebase AI Logic: set
+   /// on the first chat, and turned off if a send fails because of App Check.
+   static bool? _useAppCheck;
+@@ -355,7 +365,7 @@ class AiStylistService {
+ 
+     final raw = response.text?.trim() ?? '';
+     print('AiRecommendationService: AI final response length=${raw.length}');
+-    return _parseProductsResult(raw, searchProductCount, searchQuery);
++    return parseProductsResult(raw, searchProductCount, searchQuery);
+   }
+ 
+   // -------------------------------------------------------------------------
+@@ -384,7 +394,8 @@ class AiStylistService {
+   // Parsing
+   // -------------------------------------------------------------------------
+ 
+-  AiSessionResult _parseProductsResult(
++  @visibleForTesting
++  AiSessionResult parseProductsResult(
+     String raw,
+     int productCount,
+     String query,
+@@ -437,8 +448,9 @@ class AiStylistService {
+         overallMessage: overall,
+         keywords: query,
+       );
+-    } catch (e) {
+-      print('AiRecommendationService parse error: $e\nRaw: $raw');
++    } catch (_) {
++      // Raw output and exception messages may both contain customer content.
++      _diagnosticLog('stylist.product_result_parse_failed');
+       return _fallbackProductsResult(productCount, query);
+     }
+   }
+diff --git a/test/tryon/ai_stylist_logging_test.dart b/test/tryon/ai_stylist_logging_test.dart
+new file mode 100644
+index 0000000..0821dc6
+--- /dev/null
++++ b/test/tryon/ai_stylist_logging_test.dart
+@@ -0,0 +1,65 @@
++import 'dart:async';
++
++import 'package:flutter_test/flutter_test.dart';
++import 'package:IDressy/src/features/tryon/ai_stylist_service.dart';
++import 'package:IDressy/src/l10n/l10n.dart';
++
++void main() {
++  const secret = 'SYNTHETIC_CUSTOMER_CONTENT_7391';
++  late List<String> diagnostics;
++  late List<String> standardOutput;
++  late AiStylistService service;
++
++  setUp(() {
++    diagnostics = [];
++    standardOutput = [];
++    service = AiStylistService(diagnosticLog: diagnostics.add);
++  });
++
++  AiProductsResult parse(String raw) => runZoned(
++    () => service.parseProductsResult(raw, 2, secret) as AiProductsResult,
++    zoneSpecification: ZoneSpecification(
++      print: (_, _, _, line) => standardOutput.add(line),
++    ),
++  );
++
++  for (final raw in [
++    '{"overall":"$secret", malformed',
++    '{"ranked":"$secret","overall":"private response"}',
++  ]) {
++    test('parse failures emit only approved diagnostics (${raw.length} chars)', () {
++      final result = parse(raw);
++
++      expect(diagnostics, ['stylist.product_result_parse_failed']);
++      expect(standardOutput, isEmpty);
++      expect([...diagnostics, ...standardOutput].join(), isNot(contains(secret)));
++      expect(result.keywords, secret);
++      expect(result.ranked.map((r) => r.originalIndex), [0, 1]);
++      expect(result.ranked.every(
++        (r) => r.explanation == currentL10n().stylistOptionForLook,
++      ), isTrue);
++      expect(result.overallMessage, currentL10n().stylistGreatPicksFallback);
++    });
++  }
++
++  test('valid response preserves ranking and emits no diagnostics', () {
++    final result = parse(
++      '{"ranked":[{"index":1,"explanation":"$secret"}],'
++      '"overall":"private response"}',
++    );
++    expect(result.ranked.map((r) => r.originalIndex), [1, 0]);
++    expect(result.ranked.first.explanation, secret);
++    expect(result.overallMessage, 'private response');
++    expect(result.keywords, secret);
++    expect(diagnostics, isEmpty);
++    expect(standardOutput, isEmpty);
++  });
++
++  test('empty response retains quiet fallback', () {
++    final result = parse('');
++    expect(result.ranked.map((r) => r.originalIndex), [0, 1]);
++    expect(result.overallMessage, currentL10n().stylistGreatPicksFallback);
++    expect(diagnostics, isEmpty);
++    expect(standardOutput, isEmpty);
++  });
++}
