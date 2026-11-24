@@ -6,8 +6,8 @@ Selected IDressy code excerpts for an enterprise Codex enablement demonstration.
 
 | Example | Before | After | Review changes |
 | --- | --- | --- | --- |
-| Shared Save workflow | [main](../../tree/main/save) | [demo/save-after](../../tree/demo/save-after/save) | [Compare](../../compare/main...demo/save-after) |
-| Approved parser diagnostics | [main](../../tree/main/logging) | [demo/logging-after](../../tree/demo/logging-after/logging) | [Compare](../../compare/main...demo/logging-after) |
+| Shared Save workflow | [main](https://github.com/tiancaidao/demo_20261125/tree/main/save) | [demo/save-after](https://github.com/tiancaidao/demo_20261125/tree/demo/save-after/save) | [PR #1 — Files changed](https://github.com/tiancaidao/demo_20261125/pull/1/files) |
+| Approved parser diagnostics | [main](https://github.com/tiancaidao/demo_20261125/tree/main/logging) | [demo/logging-after](https://github.com/tiancaidao/demo_20261125/tree/demo/logging-after/logging) | [PR #2 — Files changed](https://github.com/tiancaidao/demo_20261125/pull/2/files) |
 
 Each after branch adds task-relevant AGENTS.md guidance and changes only its example. The files are selected excerpts with omitted code marked; they are not a runnable application. Original file paths are retained beneath each example's excerpts directory.
 
