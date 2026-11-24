@@ -5,6 +5,7 @@
 import 'package:go_router/go_router.dart';
 import '../../app/routes.dart';
 import 'apparel_models.dart';
+import 'tabs/save_to_closet.dart';
 import 'unified_search_provider.dart';
 import '../garments/garments_provider.dart';
 import '../../core/data/cloud_store.dart';
@@ -14,16 +15,14 @@ import '../../core/data/cloud_store.dart';
   void _toggleSaved() {
     if (widget.product != null) {
       final category = TryOnUtil.inferCategory(widget.title);
-      ref
-          .read(garmentsProvider.notifier)
-          .toggleGarment(
-            productId: widget.product!.id.toString(),
-            imageUrl: _shownImage,
-            title: widget.title,
-            category: category,
-            productUrl: _productUrl,
-            source: widget.product!.source,
-          );
+      toggleSavedToCloset(
+        context: context,
+        product: widget.product!.withImage(_shownImage),
+        category: category,
+        title: widget.title,
+        productUrl: _productUrl,
+        messageAtTop: true,
+      );
       ref
           .read(analyticsServiceProvider)
           .logAddToGarments(

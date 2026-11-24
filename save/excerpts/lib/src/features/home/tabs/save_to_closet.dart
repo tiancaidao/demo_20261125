@@ -5,10 +5,14 @@
 /// already there. A save shows "Saved to Closet" with an Undo action.
 /// Returns whether the product is saved afterwards. [messageAtTop] shows
 /// the message below the top bar, clear of content above the bottom bar.
+/// Overrides preserve details discovered after the product card was loaded.
+/// Use the product's existing model helpers to select a different image.
 Future<bool> toggleSavedToCloset({
   required BuildContext context,
   required ApparelProduct product,
   required String category,
+  String? title,
+  String? productUrl,
   bool messageAtTop = false,
 }) async {
   // The container outlives the calling widget, so Undo still works after
@@ -18,9 +22,9 @@ Future<bool> toggleSavedToCloset({
   Future<void> toggle() => notifier.toggleGarment(
     productId: product.id,
     imageUrl: product.mainImage,
-    title: product.title,
+    title: title ?? product.title,
     category: category,
-    productUrl: product.detailUrl,
+    productUrl: productUrl ?? product.detailUrl,
     source: product.source,
   );
 
