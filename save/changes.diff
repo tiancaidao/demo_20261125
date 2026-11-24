@@ -1,0 +1,186 @@
+diff --git a/AGENTS.md b/AGENTS.md
+new file mode 100644
+index 0000000..acfe737
+--- /dev/null
++++ b/AGENTS.md
+@@ -0,0 +1,21 @@
++# IDressy team conventions
++
++## Before implementing a change
++- Search for similar features, shared components, services, model helpers, and existing tests.
++- Identify what can be reused and which caller-specific behavior must remain different.
++- Briefly explain the existing implementation you found and the smallest appropriate change before editing.
++
++## Implementation
++- Prefer reusing an existing implementation over introducing a parallel one.
++- If reuse needs an extension, make a focused, backward-compatible change. Preserve existing callers and defaults.
++- Reuse existing model transformations before adding equivalent parameters or adapters.
++- Follow established architecture, naming, state management, localization, and error-handling patterns.
++- Preserve data semantics, side effects, and user-visible behavior outside the requested change.
++- Avoid unrelated refactoring, new dependencies, and speculative abstractions.
++- If reuse would distort the existing contract or materially expand scope, explain the tradeoff and ask for a design decision.
++
++## Review and verification
++- Inspect the diff for duplicated behavior, compatibility changes, and unintended side effects.
++- Cover both the new use case and existing callers with focused regression tests when execution is requested and available.
++- Use synthetic data and isolated dependencies. Do not use production services.
++- Report actual verification results and gaps. Never describe unrun checks as passed.
+diff --git a/lib/src/features/home/product_detail_screen.dart b/lib/src/features/home/product_detail_screen.dart
+index 98de13a..fbcb0d6 100644
+--- a/lib/src/features/home/product_detail_screen.dart
++++ b/lib/src/features/home/product_detail_screen.dart
+@@ -12,6 +12,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
+ import 'package:go_router/go_router.dart';
+ import '../../app/routes.dart';
+ import 'apparel_models.dart';
++import 'tabs/save_to_closet.dart';
+ import 'unified_search_provider.dart';
+ import '../garments/garments_provider.dart';
+ import '../../core/data/cloud_store.dart';
+@@ -400,16 +401,14 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
+   void _toggleSaved() {
+     if (widget.product != null) {
+       final category = TryOnUtil.inferCategory(widget.title);
+-      ref
+-          .read(garmentsProvider.notifier)
+-          .toggleGarment(
+-            productId: widget.product!.id.toString(),
+-            imageUrl: _shownImage,
+-            title: widget.title,
+-            category: category,
+-            productUrl: _productUrl,
+-            source: widget.product!.source,
+-          );
++      toggleSavedToCloset(
++        context: context,
++        product: widget.product!.withImage(_shownImage),
++        category: category,
++        title: widget.title,
++        productUrl: _productUrl,
++        messageAtTop: true,
++      );
+       ref
+           .read(analyticsServiceProvider)
+           .logAddToGarments(
+diff --git a/lib/src/features/home/tabs/save_to_closet.dart b/lib/src/features/home/tabs/save_to_closet.dart
+index b3e2237..31fde76 100644
+--- a/lib/src/features/home/tabs/save_to_closet.dart
++++ b/lib/src/features/home/tabs/save_to_closet.dart
+@@ -10,10 +10,14 @@ import '../../../l10n/l10n.dart';
+ /// already there. A save shows "Saved to Closet" with an Undo action.
+ /// Returns whether the product is saved afterwards. [messageAtTop] shows
+ /// the message below the top bar, clear of content above the bottom bar.
++/// Overrides preserve details discovered after the product card was loaded.
++/// Use the product's existing model helpers to select a different image.
+ Future<bool> toggleSavedToCloset({
+   required BuildContext context,
+   required ApparelProduct product,
+   required String category,
++  String? title,
++  String? productUrl,
+   bool messageAtTop = false,
+ }) async {
+   // The container outlives the calling widget, so Undo still works after
+@@ -27,9 +31,9 @@ Future<bool> toggleSavedToCloset({
+   Future<void> toggle() => notifier.toggleGarment(
+     productId: product.id,
+     imageUrl: product.mainImage,
+-    title: product.title,
++    title: title ?? product.title,
+     category: category,
+-    productUrl: product.detailUrl,
++    productUrl: productUrl ?? product.detailUrl,
+     source: product.source,
+   );
+ 
+diff --git a/test/garment_undo_test.dart b/test/garment_undo_test.dart
+index 81a692c..4ff6410 100644
+--- a/test/garment_undo_test.dart
++++ b/test/garment_undo_test.dart
+@@ -180,6 +180,61 @@ void main() {
+     await tester.pump(const Duration(seconds: 6));
+   });
+ 
++  for (final useOverrides in [false, true]) {
++    testWidgets(
++      'shared Save preserves ${useOverrides ? 'detail overrides' : 'existing defaults'} and supports Undo',
++      (tester) async {
++        const selectedImage = 'data:image/png;base64,AQID';
++        await tester.pumpWidget(
++          ProviderScope(
++            overrides: [appDatabaseProvider.overrideWithValue(db)],
++            child: MaterialApp(
++              home: Scaffold(
++                body: _Save(
++                  imageUrl: useOverrides ? selectedImage : null,
++                  title: useOverrides ? 'Selected dress' : null,
++                  productUrl: useOverrides ? 'https://shop.example/resolved' : null,
++                ),
++              ),
++            ),
++          ),
++        );
++        Future<void> settle() async {
++          for (var i = 0; i < 15; i++) {
++            await tester.runAsync(
++              () => Future<void>.delayed(const Duration(milliseconds: 20)),
++            );
++            await tester.pump(const Duration(milliseconds: 100));
++          }
++        }
++
++        await settle();
++        await tester.tap(find.text('Save'));
++        await settle();
++        final row = await tester.runAsync(
++          () => db.select(db.garmentItems).getSingle(),
++        );
++        expect(row!.name, useOverrides ? 'Selected dress' : _product.title);
++        expect(row.productId, _product.id);
++        expect(row.productUrl,
++            useOverrides ? 'https://shop.example/resolved' : _product.detailUrl);
++        expect(row.category, 'top');
++        expect(row.source, _product.source);
++        final bytes = await tester.runAsync(
++          () => File('${docs.path}/${row.imagePath}').readAsBytes(),
++        );
++        expect(bytes, useOverrides ? [1, 2, 3] : [0, 0, 0]);
++        expect(find.text('Saved to Closet'), findsOneWidget);
++        expect(find.text('Undo'), findsOneWidget);
++        await tester.tap(find.text('Undo'));
++        await settle();
++        expect(await tester.runAsync(rows), isEmpty);
++        expect(cloud.records, isEmpty);
++        await tester.pump(const Duration(seconds: 6));
++      },
++    );
++  }
++
+   group('signed in', () {
+     late ProviderContainer container;
+     late GarmentsNotifier notifier;
+@@ -330,7 +385,11 @@ void main() {
+ 
+ /// The Shop's Save button: reads the garments, saves with an Undo message.
+ class _Save extends ConsumerWidget {
+-  const _Save();
++  const _Save({this.imageUrl, this.title, this.productUrl});
++
++  final String? imageUrl;
++  final String? title;
++  final String? productUrl;
+ 
+   @override
+   Widget build(BuildContext context, WidgetRef ref) {
+@@ -340,8 +399,10 @@ class _Save extends ConsumerWidget {
+     return TextButton(
+       onPressed: () => toggleSavedToCloset(
+         context: context,
+-        product: _product,
++        product: imageUrl == null ? _product : _product.withImage(imageUrl!),
+         category: 'top',
++        title: title,
++        productUrl: productUrl,
+         messageAtTop: true,
+       ),
+       child: Text(saved ? 'Saved' : 'Save'),
